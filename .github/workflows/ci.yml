@@ -1,0 +1,136 @@
+# Workflow name shown in the GitHub Actions UI.
+name: CI
+
+# Events that trigger this workflow.
+on:
+  # Run for all pull requests.
+  pull_request:
+  # Run on pushes to main branch.
+  push:
+    branches: [main]
+  # Allow manual trigger from GitHub Actions tab.
+  workflow_dispatch:
+
+# Default token permissions for jobs in this workflow.
+permissions:
+  # Read-only access is enough for checkout and build/test work.
+  contents: read
+
+jobs:
+  # Job 1: lint + unit test checks.
+  lint-and-unit-tests:
+    # Friendly name shown in Actions UI.
+    name: Lint + Unit Tests
+    # Runner image provided by GitHub.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Pull repository code into the runner workspace.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install Python so we can lint/test API + worker code.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Match project's required Python major/minor version.
+          python-version: "3.12"
+
+      # Install common Python lint/test tools used by this scaffold.
+      - name: Install Python CI tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff pytest
+
+      # Run Python lint/tests only if Python files/tests exist.
+      - name: Lint and test Python apps (apps/api + apps/workers)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Directories where Python services are expected in this monorepo.
+          python_targets=("apps/api" "apps/workers")
+
+          # Detect whether at least one .py file exists.
+          if find "${python_targets[@]}" -type f -name "*.py" | grep -q .; then
+            echo "Python files found. Running ruff..."
+            ruff check "${python_targets[@]}"
+
+            # Detect test files using common naming conventions.
+            if find "${python_targets[@]}" -type f \( -name "test_*.py" -o -path "*/tests/*.py" \) | grep -q .; then
+              echo "Python tests found. Running pytest..."
+              pytest -q "${python_targets[@]}"
+            else
+              echo "No Python tests found yet. Skipping pytest."
+            fi
+          else
+            echo "No Python files found yet. Skipping Python lint/tests."
+          fi
+
+      # Install Node only when UI has a package.json.
+      - name: Set up Node.js for UI checks
+        if: ${{ hashFiles('apps/ui/package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          # Stable LTS version for frontend CI.
+          node-version: "20"
+          # Enable npm cache for faster installs.
+          cache: npm
+          # Lockfile path used for cache key generation.
+          cache-dependency-path: apps/ui/package-lock.json
+
+      # Install frontend dependencies when UI package exists.
+      - name: Install UI dependencies
+        if: ${{ hashFiles('apps/ui/package.json') != '' }}
+        working-directory: apps/ui
+        run: npm ci
+
+      # Run frontend lint + unit tests if scripts are present.
+      - name: Lint and test UI (apps/ui)
+        if: ${{ hashFiles('apps/ui/package.json') != '' }}
+        working-directory: apps/ui
+        run: |
+          npm run lint --if-present
+          npm run test --if-present
+
+      # Explicit message to keep CI logs clear while UI is scaffold-only.
+      - name: UI checks skipped (package.json not found)
+        if: ${{ hashFiles('apps/ui/package.json') == '' }}
+        run: echo "No apps/ui/package.json yet. Skipping UI lint/tests."
+
+  # Job 2: build every container image defined by Dockerfiles.
+  build-containers:
+    # Friendly job name in Actions UI.
+    name: Build Containers
+    # Runner image.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Pull repository files for Docker build contexts.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Build all Dockerfiles discovered in the repo.
+      - name: Build all Dockerfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Collect Dockerfile paths and keep stable ordering.
+          mapfile -t dockerfiles < <(find . -type f -name "Dockerfile" -not -path "./.git/*" | sort)
+
+          # If no Dockerfiles exist yet, do not fail scaffold CI.
+          if [ "${#dockerfiles[@]}" -eq 0 ]; then
+            echo "No Dockerfiles found yet. Skipping container builds."
+            exit 0
+          fi
+
+          # Build each Dockerfile with a deterministic CI tag.
+          for dockerfile in "${dockerfiles[@]}"; do
+            context_dir="$(dirname "$dockerfile")"
+            image_name="project-temporal-$(echo "${context_dir#./}" | tr '/.' '-')"
+            image_tag="${image_name}:ci-${GITHUB_SHA::7}"
+
+            echo "Building $dockerfile -> $image_tag"
+            docker build -f "$dockerfile" -t "$image_tag" "$context_dir"
+          done

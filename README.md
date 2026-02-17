@@ -11,7 +11,8 @@ Current repository status: this milestone is infrastructure-first. The API/UI/wo
 Implemented now:
 - Local Docker Compose stack for core platform dependencies.
 - Optional observability profile (Loki, Tempo, Prometheus).
-- Postgres init script creating an `app` database.
+- Env-based common config system (`.env` loaded by Docker Compose).
+- Postgres init script creating an app database from env config.
 - Repo structure scaffolding for:
   - `apps/api`
   - `apps/workers`
@@ -28,8 +29,9 @@ Not implemented yet (in this repo state):
 ## Repo Structure
 
 - `doc.md`: Product + architecture blueprint (target system behavior).
-- `docker-compose.yml`: Local infra stack definition.
-- `infra/local/postgres/init/01-init.sql`: DB bootstrap SQL.
+- `.env.example`: Shared environment-variable contract for local dev.
+- `docker-compose.yml`: Local infra stack definition (reads `.env`).
+- `infra/local/postgres/init/01-init-app-db.sh`: Env-aware DB bootstrap script.
 - `infra/local/observability/`: Loki/Tempo/Prometheus configs.
 - `local-dev-explained.md`: Beginner-friendly explanation of the local stack.
 - `apps/*`, `libs/*`, `infra/helm/*`: scaffolds/placeholders.
@@ -38,6 +40,18 @@ Not implemented yet (in this repo state):
 
 - Docker Engine + Docker Compose plugin (`docker compose` command)
 - Recommended: 6+ GB free RAM for full stack with observability
+
+## Configure Environment Variables
+
+### 1) Create local env file
+
+```bash
+cp .env.example .env
+```
+
+### 2) (Optional) Edit `.env`
+
+Change ports/passwords/hosts if needed for your machine.
 
 ## How To Run
 
@@ -48,12 +62,12 @@ docker compose up -d
 ```
 
 This starts:
-- `postgres` (localhost:5432)
-- `redis` (localhost:6379)
-- `zookeeper` (localhost:2181)
-- `kafka` (localhost:29092)
-- `temporal` (localhost:7233)
-- `temporal-ui` (http://localhost:8080)
+- `postgres` (host port from `POSTGRES_HOST_PORT`, default `5432`)
+- `redis` (host port from `REDIS_HOST_PORT`, default `6379`)
+- `zookeeper` (host port from `ZOOKEEPER_HOST_PORT`, default `2181`)
+- `kafka` (host port from `KAFKA_HOST_PORT`, default `29092`)
+- `temporal` (host port from `TEMPORAL_HOST_PORT`, default `7233`)
+- `temporal-ui` (host port from `TEMPORAL_UI_HOST_PORT`, default `8080`)
 
 ### 2) Start with observability (optional)
 
@@ -62,9 +76,9 @@ docker compose --profile observability up -d
 ```
 
 Also starts:
-- `loki` (localhost:3100)
-- `tempo` (localhost:3200, OTLP gRPC on 4317)
-- `prometheus` (http://localhost:9090)
+- `loki` (host port from `LOKI_HOST_PORT`, default `3100`)
+- `tempo` (host ports from `TEMPO_HTTP_HOST_PORT`/`TEMPO_OTLP_GRPC_HOST_PORT`, defaults `3200`/`4317`)
+- `prometheus` (host port from `PROMETHEUS_HOST_PORT`, default `9090`)
 
 ### 3) Check service status
 
@@ -94,10 +108,10 @@ docker compose down -v
 
 ## Quick Verification
 
-- Temporal UI: `http://localhost:8080`
-- Prometheus (if enabled): `http://localhost:9090`
-- Postgres reachable on `localhost:5432`
-- Redis reachable on `localhost:6379`
+- Temporal UI: `http://localhost:${TEMPORAL_UI_HOST_PORT:-8080}`
+- Prometheus (if enabled): `http://localhost:${PROMETHEUS_HOST_PORT:-9090}`
+- Postgres reachable on `localhost:${POSTGRES_HOST_PORT:-5432}`
+- Redis reachable on `localhost:${REDIS_HOST_PORT:-6379}`
 
 ## Notes
 

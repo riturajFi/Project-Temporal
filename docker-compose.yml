@@ -1,3 +1,6 @@
+# Docker Compose automatically reads variables from `.env` in this folder.
+# `${VAR:-default}` means: use VAR from `.env`, otherwise use default.
+
 # Top-level list of all containers (services) that Docker Compose should run.
 services:
   # PostgreSQL database used by app + Temporal metadata storage.
@@ -8,26 +11,28 @@ services:
     container_name: temporal-postgres
     # Environment variables passed into Postgres on first startup.
     environment:
-      # Default DB username created by Postgres.
-      POSTGRES_USER: postgres
-      # Password for the default DB user.
-      POSTGRES_PASSWORD: postgres
-      # Initial database name that Postgres creates.
-      POSTGRES_DB: temporal
+      # Username for the admin/database owner account.
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Password for the Postgres user above.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Primary database created automatically by Postgres image.
+      POSTGRES_DB: ${POSTGRES_DB:-temporal}
+      # Extra app database name used by our init script.
+      APP_DB_NAME: ${APP_DB_NAME:-app}
     # Port mapping format is HOST:CONTAINER.
     ports:
-      # Expose Postgres on localhost:5432.
-      - "5432:5432"
+      # Expose Postgres container port 5432 to a configurable host port.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     # Persistent and bind-mounted storage definitions.
     volumes:
       # Named volume to persist DB data across container restarts.
       - postgres_data:/var/lib/postgresql/data
-      # Run SQL init scripts from this repo folder during first DB init.
+      # Run init scripts from repo folder during first DB initialization.
       - ./infra/local/postgres/init:/docker-entrypoint-initdb.d:ro
     # Health check lets other services wait until Postgres is ready.
     healthcheck:
       # pg_isready returns success when DB accepts connections.
-      test: ["CMD-SHELL", "pg_isready -U postgres -d temporal"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-temporal}"]
       # Run the health check every 10 seconds.
       interval: 10s
       # Mark check attempt failed if it takes over 5 seconds.
@@ -43,9 +48,9 @@ services:
     container_name: temporal-redis
     # Start Redis with append-only file mode for persistence.
     command: ["redis-server", "--appendonly", "yes"]
-    # Publish Redis default port to host.
+    # Publish Redis default container port to configurable host port.
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     # Persist Redis data to a named volume.
     volumes:
       - redis_data:/data
@@ -70,9 +75,9 @@ services:
     environment:
       # Allow startup without authentication for local dev only.
       ALLOW_ANONYMOUS_LOGIN: "yes"
-    # Expose Zookeeper client port.
+    # Expose Zookeeper client port on configurable host port.
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_HOST_PORT:-2181}:2181"
     # Persist Zookeeper metadata.
     volumes:
       - zookeeper_data:/bitnami/zookeeper
@@ -90,21 +95,21 @@ services:
     environment:
       # Allow plaintext connections (no TLS/SASL) for local dev.
       ALLOW_PLAINTEXT_LISTENER: "yes"
-      # Where Kafka finds Zookeeper.
+      # Where Kafka finds Zookeeper inside Docker network.
       KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
-      # Internal and host-facing listener bindings.
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
-      # How clients should connect: internal DNS + host localhost.
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      # Map listener names to security protocols.
+      # Internal + host-facing listener port bindings.
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:${KAFKA_INTERNAL_PORT:-9092},PLAINTEXT_HOST://:${KAFKA_HOST_PORT:-29092}
+      # Addresses clients should use for each listener.
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT:-9092},PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:${KAFKA_HOST_PORT:-29092}
+      # Map listener names to protocol.
       KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      # Broker-to-broker communication uses internal listener.
+      # Broker-to-broker communication listener.
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       # Auto-create topics when first referenced (dev convenience).
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
-    # Expose host-facing listener.
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS:-true}
+    # Expose host-facing listener port.
     ports:
-      - "29092:29092"
+      - "${KAFKA_HOST_PORT:-29092}:${KAFKA_HOST_PORT:-29092}"
     # Persist Kafka logs/state.
     volumes:
       - kafka_data:/bitnami/kafka
@@ -124,18 +129,18 @@ services:
       # Use PostgreSQL persistence backend.
       DB: postgresql
       # Postgres port inside Docker network.
-      DB_PORT: 5432
+      DB_PORT: ${POSTGRES_PORT:-5432}
       # Postgres login username.
-      POSTGRES_USER: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       # Postgres login password.
-      POSTGRES_PWD: postgres
-      # Hostname of Postgres container in Docker network.
-      POSTGRES_SEEDS: postgres
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-postgres}
+      # Postgres host inside Docker network.
+      POSTGRES_SEEDS: ${POSTGRES_HOST:-postgres}
       # Disable Elasticsearch requirement in local mode.
       ENABLE_ES: "false"
     # Expose Temporal gRPC API endpoint.
     ports:
-      - "7233:7233"
+      - "${TEMPORAL_HOST_PORT:-7233}:7233"
 
   # Temporal web UI for inspecting namespaces/workflows.
   temporal-ui:
@@ -149,12 +154,12 @@ services:
     # UI runtime configuration.
     environment:
       # Temporal server address reachable within Docker network.
-      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS_DOCKER:-temporal:7233}
       # Allowed browser origin for UI CORS behavior.
-      TEMPORAL_CORS_ORIGINS: http://localhost:3000
-    # Publish web UI on host port 8080.
+      TEMPORAL_CORS_ORIGINS: ${TEMPORAL_CORS_ORIGINS:-http://localhost:3000}
+    # Publish web UI on configurable host port.
     ports:
-      - "8080:8080"
+      - "${TEMPORAL_UI_HOST_PORT:-8080}:8080"
 
   # Loki log backend (optional) for observability profile.
   loki:
@@ -169,9 +174,9 @@ services:
     # Mount local Loki config read-only.
     volumes:
       - ./infra/local/observability/loki-config.yml:/etc/loki/config.yml:ro
-    # Expose Loki HTTP API.
+    # Expose Loki HTTP API on configurable host port.
     ports:
-      - "3100:3100"
+      - "${LOKI_HOST_PORT:-3100}:3100"
 
   # Tempo trace backend (optional) for observability profile.
   tempo:
@@ -186,10 +191,10 @@ services:
     # Mount local Tempo config read-only.
     volumes:
       - ./infra/local/observability/tempo-config.yml:/etc/tempo/config.yml:ro
-    # Publish Tempo HTTP API and OTLP gRPC ingest ports.
+    # Publish Tempo HTTP API + OTLP gRPC ingest on configurable host ports.
     ports:
-      - "3200:3200"
-      - "4317:4317"
+      - "${TEMPO_HTTP_HOST_PORT:-3200}:3200"
+      - "${TEMPO_OTLP_GRPC_HOST_PORT:-4317}:4317"
 
   # Prometheus metrics scraper/store (optional) for observability profile.
   prometheus:
@@ -207,9 +212,9 @@ services:
     volumes:
       - ./infra/local/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    # Expose Prometheus web UI/API.
+    # Expose Prometheus web UI/API on configurable host port.
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
 
 # Named volumes are Docker-managed persistent disks.
 volumes:

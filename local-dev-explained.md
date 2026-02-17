@@ -2,6 +2,19 @@
 
 This file explains the local Docker stack in simple terms.
 
+## Step 0: Environment Variables
+
+Before starting containers, create your local `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Why this matters:
+- `docker-compose.yml` reads variables from `.env` automatically.
+- You can change ports/passwords without editing compose YAML.
+- `.env.example` is the shared template for the whole team.
+
 ## What You Start
 
 When you run:
@@ -45,16 +58,18 @@ you also start:
 
 ## Port Map (Host -> Service)
 
-- `5432` -> PostgreSQL
-- `6379` -> Redis
-- `2181` -> Zookeeper
-- `29092` -> Kafka (host-facing listener)
-- `7233` -> Temporal gRPC API
-- `8080` -> Temporal UI
-- `3100` -> Loki HTTP API (optional)
-- `3200` -> Tempo HTTP API (optional)
-- `4317` -> Tempo OTLP gRPC ingest (optional)
-- `9090` -> Prometheus UI/API (optional)
+These host ports come from `.env` (defaults shown):
+
+- `${POSTGRES_HOST_PORT:-5432}` -> PostgreSQL
+- `${REDIS_HOST_PORT:-6379}` -> Redis
+- `${ZOOKEEPER_HOST_PORT:-2181}` -> Zookeeper
+- `${KAFKA_HOST_PORT:-29092}` -> Kafka (host-facing listener)
+- `${TEMPORAL_HOST_PORT:-7233}` -> Temporal gRPC API
+- `${TEMPORAL_UI_HOST_PORT:-8080}` -> Temporal UI
+- `${LOKI_HOST_PORT:-3100}` -> Loki HTTP API (optional)
+- `${TEMPO_HTTP_HOST_PORT:-3200}` -> Tempo HTTP API (optional)
+- `${TEMPO_OTLP_GRPC_HOST_PORT:-4317}` -> Tempo OTLP gRPC ingest (optional)
+- `${PROMETHEUS_HOST_PORT:-9090}` -> Prometheus UI/API (optional)
 
 ## Who Talks to Whom
 
@@ -120,17 +135,17 @@ docker compose down
 
 ## Quick Health Checks
 
-- Temporal UI opens: `http://localhost:8080`
-- Postgres reachable on `localhost:5432`
-- Redis reachable on `localhost:6379`
-- Prometheus (if enabled): `http://localhost:9090`
-- Loki (if enabled): `http://localhost:3100`
+- Temporal UI opens: `http://localhost:${TEMPORAL_UI_HOST_PORT:-8080}`
+- Postgres reachable on `localhost:${POSTGRES_HOST_PORT:-5432}`
+- Redis reachable on `localhost:${REDIS_HOST_PORT:-6379}`
+- Prometheus (if enabled): `http://localhost:${PROMETHEUS_HOST_PORT:-9090}`
+- Loki (if enabled): `http://localhost:${LOKI_HOST_PORT:-3100}`
 
 ## Common Beginner Issues
 
 - Port already in use:
   - Another local service is using that port.
-  - Fix by stopping conflicting service or changing compose port mapping.
+  - Fix by changing the related `*_HOST_PORT` value in `.env`.
 - Containers restart repeatedly:
   - Check logs with `docker compose logs <service>`.
 - Service not available immediately:

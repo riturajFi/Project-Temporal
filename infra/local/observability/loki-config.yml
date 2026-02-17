@@ -1,0 +1,58 @@
+# Disable authentication so local tools can push/query logs without tokens.
+auth_enabled: false
+
+# HTTP server settings for Loki API/UI endpoints.
+server:
+  # Port where Loki serves HTTP endpoints.
+  http_listen_port: 3100
+
+# Common Loki runtime settings.
+common:
+  # Base folder for Loki local files.
+  path_prefix: /tmp/loki
+  # Single replica mode for local development.
+  replication_factor: 1
+  # Ring is how Loki tracks ingesters/distributors.
+  ring:
+    # Key/value storage backend for the ring state.
+    kvstore:
+      # In-memory ring state, simplest for single-node local setup.
+      store: inmemory
+
+# Schema controls how indexes/chunks are organized over time.
+schema_config:
+  # List of schema periods (time ranges).
+  configs:
+    # Start date for this schema configuration.
+    - from: 2024-01-01
+      # Use TSDB index/chunk layout.
+      store: tsdb
+      # Store data in local filesystem.
+      object_store: filesystem
+      # Schema version for TSDB layout.
+      schema: v13
+      # Index naming and rotation settings.
+      index:
+        # Prefix for generated index names.
+        prefix: index_
+        # New index period frequency.
+        period: 24h
+
+# Where chunk/index files are stored.
+storage_config:
+  # Local disk backend settings.
+  filesystem:
+    # Directory where Loki stores chunk files.
+    directory: /tmp/loki/chunks
+
+# Write throughput and burst limits.
+limits_config:
+  # Sustained ingestion speed allowed.
+  ingestion_rate_mb: 8
+  # Short burst max ingestion allowance.
+  ingestion_burst_size_mb: 16
+
+# Compactor settings for housekeeping of data blocks.
+compactor:
+  # Folder used by compactor temporary/work files.
+  working_directory: /tmp/loki/compactor

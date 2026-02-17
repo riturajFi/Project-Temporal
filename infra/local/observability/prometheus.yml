@@ -1,0 +1,13 @@
+# Global defaults applied to all scrape jobs.
+global:
+  # How frequently Prometheus polls configured targets.
+  scrape_interval: 15s
+
+# List of metrics collection jobs.
+scrape_configs:
+  # A job definition named `prometheus`.
+  - job_name: prometheus
+    # Static target list for this job.
+    static_configs:
+      # Scrape Prometheus itself (self-monitoring).
+      - targets: ["prometheus:9090"]

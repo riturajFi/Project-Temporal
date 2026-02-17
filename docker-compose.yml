@@ -1,0 +1,225 @@
+# Top-level list of all containers (services) that Docker Compose should run.
+services:
+  # PostgreSQL database used by app + Temporal metadata storage.
+  postgres:
+    # Official Postgres image, Alpine variant is smaller/lighter.
+    image: postgres:16-alpine
+    # Fixed container name for easier local debugging with `docker ps`.
+    container_name: temporal-postgres
+    # Environment variables passed into Postgres on first startup.
+    environment:
+      # Default DB username created by Postgres.
+      POSTGRES_USER: postgres
+      # Password for the default DB user.
+      POSTGRES_PASSWORD: postgres
+      # Initial database name that Postgres creates.
+      POSTGRES_DB: temporal
+    # Port mapping format is HOST:CONTAINER.
+    ports:
+      # Expose Postgres on localhost:5432.
+      - "5432:5432"
+    # Persistent and bind-mounted storage definitions.
+    volumes:
+      # Named volume to persist DB data across container restarts.
+      - postgres_data:/var/lib/postgresql/data
+      # Run SQL init scripts from this repo folder during first DB init.
+      - ./infra/local/postgres/init:/docker-entrypoint-initdb.d:ro
+    # Health check lets other services wait until Postgres is ready.
+    healthcheck:
+      # pg_isready returns success when DB accepts connections.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d temporal"]
+      # Run the health check every 10 seconds.
+      interval: 10s
+      # Mark check attempt failed if it takes over 5 seconds.
+      timeout: 5s
+      # Mark container unhealthy after 10 failed checks.
+      retries: 10
+
+  # Redis in-memory store for caching, counters, and queue-like patterns.
+  redis:
+    # Official Redis image with Alpine base.
+    image: redis:7-alpine
+    # Fixed name for easier local identification.
+    container_name: temporal-redis
+    # Start Redis with append-only file mode for persistence.
+    command: ["redis-server", "--appendonly", "yes"]
+    # Publish Redis default port to host.
+    ports:
+      - "6379:6379"
+    # Persist Redis data to a named volume.
+    volumes:
+      - redis_data:/data
+    # Health check for Redis availability.
+    healthcheck:
+      # `PING` should return `PONG` when Redis is healthy.
+      test: ["CMD", "redis-cli", "ping"]
+      # Poll health every 10 seconds.
+      interval: 10s
+      # Fail a single health attempt after 5 seconds.
+      timeout: 5s
+      # Mark unhealthy after 10 consecutive failures.
+      retries: 10
+
+  # Zookeeper coordinates Kafka broker metadata in this setup.
+  zookeeper:
+    # Bitnami-maintained Zookeeper image.
+    image: bitnami/zookeeper:3.9
+    # Fixed container name for local debugging.
+    container_name: temporal-zookeeper
+    # Runtime configuration values.
+    environment:
+      # Allow startup without authentication for local dev only.
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    # Expose Zookeeper client port.
+    ports:
+      - "2181:2181"
+    # Persist Zookeeper metadata.
+    volumes:
+      - zookeeper_data:/bitnami/zookeeper
+
+  # Kafka event backbone for async event streaming.
+  kafka:
+    # Bitnami-maintained Kafka image.
+    image: bitnami/kafka:3.7
+    # Fixed container name.
+    container_name: temporal-kafka
+    # Ensure Zookeeper starts first.
+    depends_on:
+      - zookeeper
+    # Kafka broker configuration via environment variables.
+    environment:
+      # Allow plaintext connections (no TLS/SASL) for local dev.
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      # Where Kafka finds Zookeeper.
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Internal and host-facing listener bindings.
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
+      # How clients should connect: internal DNS + host localhost.
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      # Map listener names to security protocols.
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Broker-to-broker communication uses internal listener.
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Auto-create topics when first referenced (dev convenience).
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    # Expose host-facing listener.
+    ports:
+      - "29092:29092"
+    # Persist Kafka logs/state.
+    volumes:
+      - kafka_data:/bitnami/kafka
+
+  # Temporal server with auto DB schema setup for development.
+  temporal:
+    # Temporal image that bootstraps schema automatically.
+    image: temporalio/auto-setup:1.25
+    # Fixed name for easier local command targeting.
+    container_name: temporal-server
+    # Start only after Postgres reports healthy.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Temporal persistence configuration.
+    environment:
+      # Use PostgreSQL persistence backend.
+      DB: postgresql
+      # Postgres port inside Docker network.
+      DB_PORT: 5432
+      # Postgres login username.
+      POSTGRES_USER: postgres
+      # Postgres login password.
+      POSTGRES_PWD: postgres
+      # Hostname of Postgres container in Docker network.
+      POSTGRES_SEEDS: postgres
+      # Disable Elasticsearch requirement in local mode.
+      ENABLE_ES: "false"
+    # Expose Temporal gRPC API endpoint.
+    ports:
+      - "7233:7233"
+
+  # Temporal web UI for inspecting namespaces/workflows.
+  temporal-ui:
+    # Official Temporal UI image.
+    image: temporalio/ui:2.34.0
+    # Fixed container name.
+    container_name: temporal-ui
+    # UI depends on Temporal server endpoint.
+    depends_on:
+      - temporal
+    # UI runtime configuration.
+    environment:
+      # Temporal server address reachable within Docker network.
+      TEMPORAL_ADDRESS: temporal:7233
+      # Allowed browser origin for UI CORS behavior.
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    # Publish web UI on host port 8080.
+    ports:
+      - "8080:8080"
+
+  # Loki log backend (optional) for observability profile.
+  loki:
+    # Grafana Loki image.
+    image: grafana/loki:3.0.0
+    # Fixed container name.
+    container_name: temporal-loki
+    # Service starts only when `--profile observability` is used.
+    profiles: ["observability"]
+    # Tell Loki where its config file lives in container.
+    command: ["-config.file=/etc/loki/config.yml"]
+    # Mount local Loki config read-only.
+    volumes:
+      - ./infra/local/observability/loki-config.yml:/etc/loki/config.yml:ro
+    # Expose Loki HTTP API.
+    ports:
+      - "3100:3100"
+
+  # Tempo trace backend (optional) for observability profile.
+  tempo:
+    # Grafana Tempo image.
+    image: grafana/tempo:2.5.0
+    # Fixed container name.
+    container_name: temporal-tempo
+    # Start only under observability profile.
+    profiles: ["observability"]
+    # Tell Tempo where its config file is mounted.
+    command: ["-config.file=/etc/tempo/config.yml"]
+    # Mount local Tempo config read-only.
+    volumes:
+      - ./infra/local/observability/tempo-config.yml:/etc/tempo/config.yml:ro
+    # Publish Tempo HTTP API and OTLP gRPC ingest ports.
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+
+  # Prometheus metrics scraper/store (optional) for observability profile.
+  prometheus:
+    # Official Prometheus image.
+    image: prom/prometheus:v2.53.0
+    # Fixed container name.
+    container_name: temporal-prometheus
+    # Start only under observability profile.
+    profiles: ["observability"]
+    # Startup flags: config path + TSDB data path.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    # Mount Prometheus config and persistent storage.
+    volumes:
+      - ./infra/local/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    # Expose Prometheus web UI/API.
+    ports:
+      - "9090:9090"
+
+# Named volumes are Docker-managed persistent disks.
+volumes:
+  # Stores Postgres database files.
+  postgres_data:
+  # Stores Redis append-only data files.
+  redis_data:
+  # Stores Zookeeper metadata snapshots/logs.
+  zookeeper_data:
+  # Stores Kafka broker logs/topics metadata.
+  kafka_data:
+  # Stores Prometheus time-series database blocks.
+  prometheus_data:

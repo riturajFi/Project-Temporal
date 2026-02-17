@@ -1,0 +1,32 @@
+# Tempo HTTP server settings.
+server:
+  # Port for Tempo HTTP API endpoints.
+  http_listen_port: 3200
+
+# Distributor receives traces from clients/collectors.
+distributor:
+  # Enabled receiver protocols.
+  receivers:
+    # OpenTelemetry protocol receiver.
+    otlp:
+      # Protocol variants supported for OTLP.
+      protocols:
+        # Enable OTLP over gRPC (default on port 4317).
+        grpc:
+
+# Storage settings for trace blocks.
+storage:
+  # Trace-specific backend configuration.
+  trace:
+    # Use local filesystem backend.
+    backend: local
+    # Local backend options.
+    local:
+      # Directory where Tempo stores trace blocks.
+      path: /tmp/tempo/traces
+
+# Background compaction and retention settings.
+compactor:
+  compaction:
+    # Keep trace data for 24 hours in this local setup.
+    block_retention: 24h
